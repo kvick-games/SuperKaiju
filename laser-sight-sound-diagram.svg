@@ -1,0 +1,190 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080" role="img" aria-labelledby="title desc">
+  <title id="title">Laser / Heat Vision Sound Synthesis Diagram</title>
+  <desc id="desc">A signal-flow diagram showing the Web Audio synthesis chain for the laser sight heat vision sound.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#06111f"/>
+      <stop offset="0.52" stop-color="#0a1726"/>
+      <stop offset="1" stop-color="#111827"/>
+    </linearGradient>
+    <linearGradient id="nodeAudio" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#123553"/>
+      <stop offset="1" stop-color="#0b263f"/>
+    </linearGradient>
+    <linearGradient id="nodeNoise" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2e1f4d"/>
+      <stop offset="1" stop-color="#181a39"/>
+    </linearGradient>
+    <linearGradient id="nodeControl" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#173f33"/>
+      <stop offset="1" stop-color="#0c2a23"/>
+    </linearGradient>
+    <linearGradient id="nodeMod" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4c3410"/>
+      <stop offset="1" stop-color="#30200d"/>
+    </linearGradient>
+    <linearGradient id="nodeOutput" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#303846"/>
+      <stop offset="1" stop-color="#171d27"/>
+    </linearGradient>
+    <filter id="softShadow" x="-20%" y="-30%" width="140%" height="170%">
+      <feDropShadow dx="0" dy="16" stdDeviation="18" flood-color="#000000" flood-opacity="0.32"/>
+    </filter>
+    <pattern id="grid" width="48" height="48" patternUnits="userSpaceOnUse">
+      <path d="M 48 0 L 0 0 0 48" fill="none" stroke="#ffffff" stroke-opacity="0.045" stroke-width="1"/>
+    </pattern>
+    <marker id="arrowAudio" markerWidth="16" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="strokeWidth">
+      <path d="M 2 2 L 14 8 L 2 14 Z" fill="#38d5ff"/>
+    </marker>
+    <marker id="arrowControl" markerWidth="16" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="strokeWidth">
+      <path d="M 2 2 L 14 8 L 2 14 Z" fill="#37e58d"/>
+    </marker>
+    <marker id="arrowMod" markerWidth="16" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="strokeWidth">
+      <path d="M 2 2 L 14 8 L 2 14 Z" fill="#ffba3a"/>
+    </marker>
+    <marker id="arrowFinal" markerWidth="16" markerHeight="16" refX="13" refY="8" orient="auto" markerUnits="strokeWidth">
+      <path d="M 2 2 L 14 8 L 2 14 Z" fill="#f7fbff"/>
+    </marker>
+    <style>
+      .background { fill: url(#bg); }
+      .grid { fill: url(#grid); }
+      .title { font: 700 54px Inter, Arial, sans-serif; fill: #f7fbff; letter-spacing: 0; }
+      .subtitle { font: 400 22px Inter, Arial, sans-serif; fill: #a8bacd; letter-spacing: 0; }
+      .section { font: 700 18px Inter, Arial, sans-serif; fill: #d8e8f8; letter-spacing: 0.6px; }
+      .label { font: 700 27px Inter, Arial, sans-serif; fill: #f7fbff; letter-spacing: 0; }
+      .small { font: 500 21px Inter, Arial, sans-serif; fill: #c4d3e3; letter-spacing: 0; }
+      .tiny { font: 500 18px Inter, Arial, sans-serif; fill: #aebed0; letter-spacing: 0; }
+      .node { stroke-width: 2.5; rx: 18; filter: url(#softShadow); }
+      .audioNode { fill: url(#nodeAudio); stroke: #38d5ff; }
+      .noiseNode { fill: url(#nodeNoise); stroke: #ad8cff; }
+      .controlNode { fill: url(#nodeControl); stroke: #37e58d; }
+      .modNode { fill: url(#nodeMod); stroke: #ffba3a; }
+      .outputNode { fill: url(#nodeOutput); stroke: #e8f1fb; }
+      .mixNode { fill: #14212f; stroke: #ff5a3d; stroke-width: 3; filter: url(#softShadow); }
+      .audioLine { fill: none; stroke: #38d5ff; stroke-width: 5; marker-end: url(#arrowAudio); }
+      .controlLine { fill: none; stroke: #37e58d; stroke-width: 5; marker-end: url(#arrowControl); }
+      .modLine { fill: none; stroke: #ffba3a; stroke-width: 4; stroke-dasharray: 12 11; marker-end: url(#arrowMod); }
+      .finalLine { fill: none; stroke: #f7fbff; stroke-width: 5; marker-end: url(#arrowFinal); }
+      .audioText { fill: #75e2ff; }
+      .controlText { fill: #72f4b2; }
+      .modText { fill: #ffd073; }
+      .accent { fill: #ff715a; }
+      .legendBox { fill: rgba(255,255,255,0.045); stroke: rgba(255,255,255,0.15); stroke-width: 1.5; rx: 16; }
+    </style>
+  </defs>
+
+  <rect class="background" width="1920" height="1080"/>
+  <rect class="grid" width="1920" height="1080"/>
+
+  <text class="title" x="88" y="96">Laser / Heat Vision Sound Synthesis</text>
+  <text class="subtitle" x="91" y="135">Exact Web Audio signal path used by SoundSystem.createHeatLoop()</text>
+
+  <rect class="legendBox" x="1328" y="60" width="460" height="118"/>
+  <path class="audioLine" d="M 1362 94 H 1434"/>
+  <text class="tiny audioText" x="1455" y="101">audio signal</text>
+  <path class="controlLine" d="M 1362 130 H 1434"/>
+  <text class="tiny controlText" x="1455" y="137">activation control</text>
+  <path class="modLine" d="M 1606 130 H 1678"/>
+  <text class="tiny modText" x="1698" y="137">frequency modulation</text>
+
+  <text class="section" x="96" y="229">ACTIVATION</text>
+  <rect class="node controlNode" x="92" y="254" width="270" height="104"/>
+  <text class="label" x="126" y="297">Heat active state</text>
+  <text class="small" x="126" y="330">LMB held and energy ready</text>
+
+  <rect class="node controlNode" x="442" y="254" width="270" height="104"/>
+  <text class="label" x="481" y="297">setHeatActive(true)</text>
+  <text class="small" x="481" y="330">called from update(state)</text>
+
+  <rect class="node controlNode" x="792" y="254" width="300" height="104"/>
+  <text class="label" x="833" y="297">Fade heat gain</text>
+  <text class="small" x="833" y="330">target 0.72, time 0.026</text>
+
+  <path class="controlLine" d="M 362 306 H 442"/>
+  <path class="controlLine" d="M 712 306 H 792"/>
+  <path class="controlLine" d="M 1092 306 C 1188 306 1210 396 1252 474"/>
+
+  <text class="section" x="96" y="420">AUDIO LAYERS</text>
+  <rect class="node audioNode" x="92" y="448" width="286" height="112"/>
+  <text class="label" x="130" y="492">Sawtooth oscillator</text>
+  <text class="small" x="130" y="526">108 Hz main hum</text>
+
+  <rect class="node audioNode" x="466" y="448" width="270" height="112"/>
+  <text class="label" x="509" y="492">Lowpass filter</text>
+  <text class="small" x="509" y="526">1240 Hz, Q 0.9</text>
+
+  <rect class="node audioNode" x="824" y="448" width="220" height="112"/>
+  <text class="label" x="875" y="492">Osc gain</text>
+  <text class="small" x="875" y="526">0.20 mix level</text>
+
+  <path class="audioLine" d="M 378 504 H 466"/>
+  <path class="audioLine" d="M 736 504 H 824"/>
+
+  <rect class="node audioNode" x="92" y="608" width="286" height="112"/>
+  <text class="label" x="128" y="652">Square oscillator</text>
+  <text class="small" x="128" y="686">220 Hz sharp pulse</text>
+
+  <rect class="node audioNode" x="466" y="608" width="270" height="112"/>
+  <text class="label" x="531" y="652">Pulse gain</text>
+  <text class="small" x="531" y="686">0.045 mix level</text>
+
+  <path class="audioLine" d="M 378 664 H 466"/>
+
+  <rect class="node noiseNode" x="92" y="768" width="286" height="112"/>
+  <text class="label" x="124" y="812">Generated noise</text>
+  <text class="small" x="124" y="846">1.4 second loop buffer</text>
+
+  <rect class="node noiseNode" x="466" y="768" width="270" height="112"/>
+  <text class="label" x="504" y="812">Bandpass filter</text>
+  <text class="small" x="504" y="846">2450 Hz, Q 3.8</text>
+
+  <rect class="node noiseNode" x="824" y="768" width="220" height="112"/>
+  <text class="label" x="866" y="812">Noise gain</text>
+  <text class="small" x="866" y="846">0.16 mix level</text>
+
+  <path class="audioLine" d="M 378 824 H 466"/>
+  <path class="audioLine" d="M 736 824 H 824"/>
+
+  <text class="section" x="96" y="966">WOBBLE MODULATION</text>
+  <rect class="node modNode" x="344" y="910" width="260" height="96"/>
+  <text class="label" x="399" y="950">Sine LFO</text>
+  <text class="small" x="399" y="981">18 Hz</text>
+
+  <rect class="node modNode" x="684" y="910" width="260" height="96"/>
+  <text class="label" x="735" y="950">LFO gain</text>
+  <text class="small" x="735" y="981">15 Hz sweep depth</text>
+
+  <path class="modLine" d="M 604 958 H 684"/>
+  <path class="modLine" d="M 944 958 C 1058 958 1088 884 1088 725 C 1088 575 522 388 250 448"/>
+  <text class="tiny modText" x="1110" y="734">modulates sawtooth frequency</text>
+
+  <rect class="mixNode" x="1220" y="454" width="300" height="260" rx="28"/>
+  <text class="label" x="1272" y="535">Heat gain mix</text>
+  <text class="small" x="1272" y="574">receives all layers</text>
+  <text class="small accent" x="1272" y="612">audible: 0.72</text>
+  <text class="small" x="1272" y="647">muted: 0.0001</text>
+
+  <path class="audioLine" d="M 1044 504 C 1110 504 1152 516 1220 548"/>
+  <path class="audioLine" d="M 736 664 C 920 664 1060 664 1220 642"/>
+  <path class="audioLine" d="M 1044 824 C 1132 824 1168 736 1220 678"/>
+
+  <text class="section" x="1580" y="420">OUTPUT</text>
+  <rect class="node outputNode" x="1588" y="448" width="250" height="96"/>
+  <text class="label" x="1636" y="488">Master gain</text>
+  <text class="small" x="1636" y="519">0.32</text>
+
+  <rect class="node outputNode" x="1588" y="608" width="250" height="112"/>
+  <text class="label" x="1624" y="651">Compressor</text>
+  <text class="small" x="1624" y="682">-18 dB, ratio 5:1</text>
+
+  <rect class="node outputNode" x="1588" y="784" width="250" height="96"/>
+  <text class="label" x="1628" y="824">Audio output</text>
+  <text class="small" x="1628" y="855">speakers / headphones</text>
+
+  <path class="finalLine" d="M 1520 584 H 1588"/>
+  <path class="finalLine" d="M 1713 544 V 608"/>
+  <path class="finalLine" d="M 1713 720 V 784"/>
+
+  <rect x="86" y="1010" width="1748" height="1.5" fill="#ffffff" opacity="0.12"/>
+  <text class="tiny" x="94" y="1044">Implementation source: src/game/SoundSystem.ts - createHeatLoop(), setHeatActive(), ensureContext()</text>
+</svg>
