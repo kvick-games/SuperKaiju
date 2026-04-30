@@ -1,8 +1,4 @@
-import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import { createRigEditor } from "./editor/index.js";
-import { mountGame } from "./game/mountGame.js";
 import "./style.css";
-import { createDemoCharacter } from "./three/index.js";
 
 const root = document.getElementById("app");
 
@@ -10,11 +6,17 @@ if (!root) {
   throw new Error("Missing #app");
 }
 
+const appRoot = root;
 let dispose = (): void => {};
 
-if (new URLSearchParams(window.location.search).has("editor")) {
+async function mountEditor(): Promise<() => void> {
+  const [{ GLTFLoader }, { createRigEditor }, { createDemoCharacter }] = await Promise.all([
+    import("three/examples/jsm/loaders/GLTFLoader.js"),
+    import("./editor/index.js"),
+    import("./three/index.js"),
+  ]);
   const demo = createDemoCharacter();
-  const editor = createRigEditor(root, {
+  const editor = createRigEditor(appRoot, {
     rig: demo.rig,
     onSave(definition) {
       const json = JSON.stringify(definition, null, 2);
@@ -40,10 +42,20 @@ if (new URLSearchParams(window.location.search).has("editor")) {
   });
 
   editor.loadCharacter(demo);
-  dispose = () => editor.dispose();
-} else {
-  dispose = mountGame(root);
+  return () => editor.dispose();
 }
+
+async function bootstrap(): Promise<void> {
+  if (new URLSearchParams(window.location.search).has("editor")) {
+    dispose = await mountEditor();
+    return;
+  }
+
+  const { mountGame } = await import("./game/mountGame.js");
+  dispose = await mountGame(appRoot);
+}
+
+void bootstrap();
 
 window.addEventListener("beforeunload", () => {
   dispose();

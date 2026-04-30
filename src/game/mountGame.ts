@@ -1,7 +1,11 @@
 import { Game } from "./Game.js";
 import "./gameStyles.css";
+import {
+  createOpenStreetMapLayoutRequest,
+  fetchOpenStreetMapLayoutWithTimeout,
+} from "./OpenStreetMapLayout.js";
 
-export function mountGame(root: HTMLElement): () => void {
+export async function mountGame(root: HTMLElement): Promise<() => void> {
   root.innerHTML = `
     <main id="game-shell" aria-label="Sky Warden Kaiju Break game">
       <div id="scene-root"></div>
@@ -21,6 +25,11 @@ export function mountGame(root: HTMLElement): () => void {
               <span>Energy</span>
               <div class="meter-track"><i id="energy-bar"></i></div>
               <strong id="energy-readout">100%</strong>
+            </div>
+            <div class="meter cold-meter">
+              <span id="weather-readout">Sunny</span>
+              <div class="meter-track"><i id="cold-bar"></i></div>
+              <strong id="cold-readout">0%</strong>
             </div>
             <div class="metric">
               <span>Monsters</span>
@@ -56,6 +65,7 @@ export function mountGame(root: HTMLElement): () => void {
           <span>Ctrl descend</span>
           <span>LMB heat</span>
           <span>RMB frost</span>
+          <span id="map-source">Procedural city</span>
         </div>
 
         <div id="message-panel" class="message-panel">
@@ -64,7 +74,21 @@ export function mountGame(root: HTMLElement): () => void {
           <p id="message-copy">
             Fly through the downtown canyons, break the rampaging monsters, and keep destruction below 60%.
           </p>
-          <button id="primary-action" type="button">Start sortie</button>
+          <div class="lobby-panel" aria-label="Co-op lobby">
+            <label class="player-name-field">
+              <span>Pilot name</span>
+              <input id="player-name" type="text" maxlength="18" autocomplete="nickname" value="Pilot" />
+            </label>
+            <div class="lobby-actions">
+              <button id="primary-action" type="button">Start sortie</button>
+              <button id="host-lobby-action" type="button">Host co-op</button>
+              <button id="join-lobby-action" type="button">Join co-op</button>
+              <button id="copy-invite-action" type="button" hidden>Copy invite</button>
+            </div>
+            <p id="lobby-status" class="lobby-status">Solo sortie ready</p>
+            <p id="lobby-invite" class="lobby-invite" hidden></p>
+            <ul id="lobby-roster" class="lobby-roster" aria-label="Lobby players"></ul>
+          </div>
         </div>
       </section>
     </main>
@@ -75,6 +99,28 @@ export function mountGame(root: HTMLElement): () => void {
     throw new Error("Missing #scene-root");
   }
 
-  const game = new Game(sceneRoot);
+  const mapSource = document.getElementById("map-source");
+  const layoutRequest = createOpenStreetMapLayoutRequest(new URLSearchParams(window.location.search));
+  const cityLayout = layoutRequest ? await loadOpenStreetMapLayout(layoutRequest) : null;
+  if (mapSource) {
+    mapSource.textContent = cityLayout?.sourceName ? `Map: ${cityLayout.sourceName}` : "Procedural city";
+  }
+
+  const game = new Game(sceneRoot, { cityLayout });
   return () => game.dispose();
+}
+
+async function loadOpenStreetMapLayout(
+  request: NonNullable<ReturnType<typeof createOpenStreetMapLayoutRequest>>,
+) {
+  try {
+    const layout = await fetchOpenStreetMapLayoutWithTimeout(request);
+    if (!layout) {
+      console.warn("OpenStreetMap data did not produce a playable layout; using procedural city.");
+    }
+    return layout;
+  } catch (error) {
+    console.warn("OpenStreetMap load failed; using procedural city.", error);
+    return null;
+  }
 }

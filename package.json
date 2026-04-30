@@ -29,20 +29,25 @@
   ],
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "dev:cloudflare": "npm run build:demo && wrangler dev",
+    "dev:public": "node scripts/dev-public.mjs",
     "build": "npm run typecheck && npm run build:lib && npm run build:demo",
     "build:demo": "vite build",
     "build:lib": "tsc -p tsconfig.build.json",
+    "deploy:cloudflare": "npm run build && wrangler deploy",
     "preview": "vite preview --host 127.0.0.1",
     "test": "npm run build:lib && node tests/run-tests.mjs",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.worker.json --noEmit"
   },
   "peerDependencies": {
     "three": "^0.164.1"
   },
   "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260430.1",
     "@types/three": "^0.164.0",
     "three": "^0.164.1",
     "typescript": "^5.4.5",
-    "vite": "^5.2.11"
+    "vite": "^5.2.11",
+    "wrangler": "^4.87.0"
   }
 }

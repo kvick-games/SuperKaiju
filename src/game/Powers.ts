@@ -1,9 +1,10 @@
 import * as THREE from "three";
-import type { City } from "./City";
+import type { City, CityDamageTarget } from "./City";
 import type { EnemyManager } from "./Enemies";
 import { FireManager } from "./Fire";
-import type { InputController } from "./Input";
-import { clamp, pointToRayDistance } from "./math";
+import { FireSimulation } from "./FireSimulation";
+import type { PlayerInputSource } from "./Input";
+import { clamp, lerp, pointToRayDistance } from "./math";
 import type { Player } from "./Player";
 import type { PowerSnapshot } from "./types";
 
@@ -16,9 +17,21 @@ const BEAM_MIDPOINT = new THREE.Vector3();
 const WORLD_UP = new THREE.Vector3(0, 1, 0);
 const FROST_RIGHT = new THREE.Vector3();
 const FROST_UP = new THREE.Vector3();
+const FROST_CENTER = new THREE.Vector3();
+const FROST_MATRIX = new THREE.Matrix4();
+const FROST_QUATERNION = new THREE.Quaternion();
+const FROST_SCALE = new THREE.Vector3();
+const FROST_COLOR = new THREE.Color();
 const SPARK_NORMAL = new THREE.Vector3();
 
 const FROST_PARTICLE_COUNT = 190;
+const FROST_CLOUD_COUNT = 28;
+const FROST_EMISSION_RATE = 18;
+const FROST_CLOUD_FREEZE_RATE = 0.2;
+const FROST_CLOUD_DAMAGE_RATE = 1.85;
+const FROST_CLOUD_BUILDING_COLD_RATE = 0.24;
+const FROST_CLOUD_BUILDING_STRESS_DAMAGE_RATE = 1.15;
+const HEAT_BUILDING_DAMAGE_RATE = 118;
 const SPARK_COUNT = 140;
 const POWER_EMPTY_ENERGY = 0.012;
 const HEAT_START_ENERGY = 0.16;
@@ -32,6 +45,17 @@ interface Spark {
   maxLife: number;
 }
 
+interface FrostCloud {
+  position: THREE.Vector3;
+  velocity: THREE.Vector3;
+  startRadius: number;
+  radius: number;
+  maxRadius: number;
+  life: number;
+  maxLife: number;
+  seed: number;
+}
+
 export class PowerSystem {
   private readonly heatLine: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly heatCore: THREE.Mesh<THREE.CylinderGeometry, THREE.MeshBasicMaterial>;
@@ -39,13 +63,19 @@ export class PowerSystem {
   private readonly heatImpact: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   private readonly heatLight: THREE.PointLight;
   private readonly fires: FireManager;
+  private readonly fireSimulation = new FireSimulation();
   private readonly frostCone: THREE.Mesh<THREE.ConeGeometry, THREE.MeshBasicMaterial>;
+  private readonly frostCloudMesh: THREE.InstancedMesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>;
   private readonly frostParticles: THREE.Points<THREE.BufferGeometry, THREE.PointsMaterial>;
   private readonly frostPositions: Float32Array;
   private readonly frostSeeds: Float32Array;
   private readonly sparkLines: THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
   private readonly sparkPositions: Float32Array;
+  private readonly frostClouds: FrostCloud[] = [];
   private readonly sparks: Spark[] = [];
+  private fireCity: City | null = null;
+  private fireCityGeneration = -1;
+  private frostEmitAccumulator = 1;
   private heatActive = false;
   private frostActive = false;
   private heatLockedOut = false;
@@ -62,7 +92,7 @@ export class PowerSystem {
     scene.add(this.heatLine);
 
     this.heatCore = new THREE.Mesh(
-      new THREE.CylinderGeometry(0.58, 0.34, 1, 16, 1, true),
+      new THREE.CylinderGeometry(0.29, 0.17, 1, 16, 1, true),
       new THREE.MeshBasicMaterial({
         color: 0xff2a18,
         transparent: true,
@@ -75,7 +105,7 @@ export class PowerSystem {
     scene.add(this.heatCore);
 
     this.heatHalo = new THREE.Mesh(
-      new THREE.CylinderGeometry(2.4, 1.1, 1, 24, 1, true),
+      new THREE.CylinderGeometry(1.2, 0.55, 1, 24, 1, true),
       new THREE.MeshBasicMaterial({
         color: 0xd71912,
         transparent: true,
@@ -118,6 +148,44 @@ export class PowerSystem {
     );
     this.frostCone.visible = false;
     scene.add(this.frostCone);
+
+    this.frostCloudMesh = new THREE.InstancedMesh(
+      new THREE.SphereGeometry(1, 18, 12),
+      new THREE.MeshBasicMaterial({
+        color: 0xb7f5ff,
+        transparent: true,
+        opacity: 0.24,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+      }),
+      FROST_CLOUD_COUNT,
+    );
+    this.frostCloudMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.frostCloudMesh.frustumCulled = false;
+    this.frostCloudMesh.visible = false;
+    scene.add(this.frostCloudMesh);
+
+    for (let index = 0; index < FROST_CLOUD_COUNT; index += 1) {
+      this.frostClouds.push({
+        position: new THREE.Vector3(),
+        velocity: new THREE.Vector3(),
+        startRadius: 0,
+        radius: 0,
+        maxRadius: 0,
+        life: 0,
+        maxLife: 0,
+        seed: Math.random(),
+      });
+      FROST_SCALE.setScalar(0.001);
+      FROST_MATRIX.compose(ORIGIN, FROST_QUATERNION, FROST_SCALE);
+      this.frostCloudMesh.setMatrixAt(index, FROST_MATRIX);
+      this.frostCloudMesh.setColorAt(index, FROST_COLOR.setRGB(0, 0, 0));
+    }
+    this.frostCloudMesh.instanceMatrix.needsUpdate = true;
+    if (this.frostCloudMesh.instanceColor) {
+      this.frostCloudMesh.instanceColor.needsUpdate = true;
+    }
 
     this.frostPositions = new Float32Array(FROST_PARTICLE_COUNT * 3);
     this.frostSeeds = new Float32Array(FROST_PARTICLE_COUNT * 4);
@@ -184,13 +252,16 @@ export class PowerSystem {
     this.heatHalo.visible = false;
     this.heatImpact.visible = false;
     this.heatLight.intensity = 0;
+    this.fireSimulation.reset();
     this.fires.reset();
     this.frostCone.visible = false;
+    this.frostEmitAccumulator = 1;
+    this.clearFrostClouds();
     this.frostParticles.visible = false;
     this.clearSparks();
   }
 
-  update(delta: number, input: InputController, player: Player, enemies: EnemyManager, city: City): PowerSnapshot {
+  update(delta: number, input: PlayerInputSource, player: Player, enemies: EnemyManager, city: City): PowerSnapshot {
     const heatHeld = input.isMouseDown(0);
     const frostHeld = input.isMouseDown(2);
 
@@ -212,6 +283,7 @@ export class PowerSystem {
 
     ORIGIN.copy(player.position).addScaledVector(player.getForward(FORWARD), 4.5);
     ORIGIN.y += 0.35;
+    this.ensureFireBurnables(city);
 
     if (this.heatActive) {
       player.drainEnergy(0.17 * delta);
@@ -228,18 +300,20 @@ export class PowerSystem {
       if (player.energy <= POWER_EMPTY_ENERGY) {
         this.frostLockedOut = true;
       }
-      this.fireFrostBreath(delta, enemies, ORIGIN, FORWARD);
+      this.fireFrostBreath(delta, ORIGIN, FORWARD);
     } else {
       this.frostCone.visible = false;
-      this.frostParticles.visible = false;
+      this.frostEmitAccumulator = 1;
     }
+    this.updateFrostClouds(delta, enemies, city);
 
     if (!this.heatActive && !this.frostActive && !player.boostActive) {
       player.rechargeEnergy(0.18 * delta);
     }
 
     this.updateSparks(delta);
-    this.fires.update(delta);
+    this.fireSimulation.update(delta);
+    this.fires.update(delta, this.fireSimulation.getActiveNodes());
 
     this.heatStatus = this.heatActive
       ? "Firing"
@@ -259,6 +333,50 @@ export class PowerSystem {
     return {
       heatActive: this.heatActive,
       frostActive: this.frostActive,
+      fireIntensity: this.fireSimulation.getAudioIntensity(player.position),
+      heatStatus: this.heatStatus,
+      frostStatus: this.frostStatus,
+    };
+  }
+
+  renderSnapshot(
+    delta: number,
+    player: Player,
+    snapshot: Pick<PowerSnapshot, "heatActive" | "frostActive" | "heatStatus" | "frostStatus">,
+    enemies: EnemyManager,
+    city: City,
+  ): PowerSnapshot {
+    this.heatActive = snapshot.heatActive;
+    this.frostActive = snapshot.frostActive;
+    this.heatStatus = snapshot.heatStatus;
+    this.frostStatus = snapshot.frostStatus;
+
+    ORIGIN.copy(player.position).addScaledVector(player.getForward(FORWARD), 4.5);
+    ORIGIN.y += 0.35;
+    this.ensureFireBurnables(city);
+
+    if (this.heatActive) {
+      this.fireHeatVision(delta, enemies, city, ORIGIN, FORWARD, false);
+    } else {
+      this.hideHeatVision();
+    }
+
+    if (this.frostActive) {
+      this.fireFrostBreath(delta, ORIGIN, FORWARD, false);
+    } else {
+      this.frostCone.visible = false;
+      this.frostEmitAccumulator = 1;
+    }
+
+    this.updateFrostClouds(delta, enemies, city, false);
+    this.updateSparks(delta);
+    this.fireSimulation.update(delta);
+    this.fires.update(delta, this.fireSimulation.getActiveNodes());
+
+    return {
+      heatActive: this.heatActive,
+      frostActive: this.frostActive,
+      fireIntensity: this.fireSimulation.getAudioIntensity(player.position),
       heatStatus: this.heatStatus,
       frostStatus: this.frostStatus,
     };
@@ -270,10 +388,12 @@ export class PowerSystem {
     city: City,
     origin: THREE.Vector3,
     forward: THREE.Vector3,
+    applyWorldEffects = true,
   ): void {
     const range = 240;
     let closestAlong = range;
     let hitEnemy: ReturnType<EnemyManager["getAlive"]>[number] | null = null;
+    let hitCityTarget: CityDamageTarget | null = null;
     let hitSurface = false;
     SPARK_NORMAL.copy(forward).multiplyScalar(-1);
 
@@ -293,29 +413,35 @@ export class PowerSystem {
     if (buildingHit && buildingHit.along < closestAlong) {
       closestAlong = buildingHit.along;
       hitEnemy = null;
+      hitCityTarget = buildingHit.target;
       hitSurface = true;
       SPARK_NORMAL.copy(forward).multiplyScalar(-1);
     }
 
     if (!hitSurface && forward.y < -0.02) {
-      const groundAlong = -origin.y / forward.y;
-      if (groundAlong > 0 && groundAlong < closestAlong) {
-        closestAlong = groundAlong;
+      const terrainAlong = city.raycastTerrainDistance(origin, forward, closestAlong);
+      if (terrainAlong !== null && terrainAlong > 0 && terrainAlong < closestAlong) {
+        closestAlong = terrainAlong;
         hitSurface = true;
         SPARK_NORMAL.set(0, 1, 0);
       }
     }
 
     HIT_POINT.copy(origin).addScaledVector(forward, closestAlong);
-    if (hitEnemy) {
+    if (applyWorldEffects && hitEnemy) {
+      hitEnemy.warm(delta * 0.34);
       hitEnemy.takeDamage(118 * delta);
+    } else if (applyWorldEffects && hitCityTarget) {
+      city.warmTarget(hitCityTarget, delta * 0.42);
+      city.damageTarget(hitCityTarget, HEAT_BUILDING_DAMAGE_RATE * delta, HIT_POINT);
     }
 
+    const hitDamageTarget = hitEnemy !== null || hitCityTarget !== null;
     this.heatLine.geometry.setFromPoints([origin, HIT_POINT]);
     this.heatLine.visible = true;
-    this.heatLine.material.opacity = hitEnemy ? 0.98 : 0.54;
-    this.placeBeamMesh(this.heatCore, origin, HIT_POINT, hitEnemy ? 1.45 : 1);
-    this.placeBeamMesh(this.heatHalo, origin, HIT_POINT, hitEnemy ? 1.28 : 0.88);
+    this.heatLine.material.opacity = hitDamageTarget ? 0.98 : 0.54;
+    this.placeBeamMesh(this.heatCore, origin, HIT_POINT, hitDamageTarget ? 1.45 : 1);
+    this.placeBeamMesh(this.heatHalo, origin, HIT_POINT, hitDamageTarget ? 1.28 : 0.88);
     this.heatCore.visible = true;
     this.heatHalo.visible = true;
     this.heatImpact.visible = true;
@@ -326,36 +452,37 @@ export class PowerSystem {
     this.heatLight.intensity = hitSurface ? 78 : 24;
 
     if (hitSurface) {
-      this.emitSparks(HIT_POINT, SPARK_NORMAL, hitEnemy ? 1.35 : 1);
-      this.fires.emitTrail(HIT_POINT, SPARK_NORMAL, hitEnemy ? 1.35 : 1.15, forward, origin);
-    } else {
-      this.fires.resetTrail();
+      this.emitSparks(HIT_POINT, SPARK_NORMAL, hitDamageTarget ? 1.35 : 1);
+      if (!hitEnemy) {
+        this.fireSimulation.igniteAt(HIT_POINT, SPARK_NORMAL, delta * 12, forward);
+      }
     }
   }
 
-  private fireFrostBreath(delta: number, enemies: EnemyManager, origin: THREE.Vector3, forward: THREE.Vector3): void {
+  private fireFrostBreath(delta: number, origin: THREE.Vector3, forward: THREE.Vector3, applyWorldEffects = true): void {
     const range = 88;
-    const coneDot = Math.cos(0.34);
+    this.frostEmitAccumulator += delta * FROST_EMISSION_RATE;
 
-    for (const enemy of enemies.getAlive()) {
-      const center = enemy.position.clone();
-      center.y += 18;
-      TO_ENEMY.copy(center).sub(origin);
-      const distance = TO_ENEMY.length();
-      if (distance <= range && TO_ENEMY.normalize().dot(forward) > coneDot) {
-        const effect = 1 - clamp(distance / range, 0, 1) * 0.38;
-        enemy.applyFrost(delta * 0.82 * effect);
-        enemy.takeDamage(delta * 7.5 * effect);
-      }
+    let emitted = 0;
+    while (this.frostEmitAccumulator >= 1 && emitted < 4) {
+      this.emitFrostCloud(origin, forward, range);
+      this.frostEmitAccumulator -= 1;
+      emitted += 1;
+    }
+
+    if (emitted >= 4) {
+      this.frostEmitAccumulator = Math.min(this.frostEmitAccumulator, 1);
     }
 
     this.frostCone.position.copy(origin).addScaledVector(forward, range * 0.5);
+    if (applyWorldEffects) {
+      this.fireSimulation.applySuppressionCone(origin, forward, range, 0.34, delta * 5.6);
+    }
     NEG_FORWARD.copy(forward).multiplyScalar(-1);
-    this.frostCone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), NEG_FORWARD);
+    this.frostCone.quaternion.setFromUnitVectors(WORLD_UP, NEG_FORWARD);
     this.frostCone.scale.setScalar(1 + Math.sin(performance.now() * 0.01) * 0.035);
+    this.frostCone.material.opacity = 0.08 + Math.sin(performance.now() * 0.014) * 0.018;
     this.frostCone.visible = true;
-    this.updateFrostParticles(origin, forward, range);
-    this.frostParticles.visible = true;
   }
 
   private hideHeatVision(): void {
@@ -364,7 +491,20 @@ export class PowerSystem {
     this.heatHalo.visible = false;
     this.heatImpact.visible = false;
     this.heatLight.intensity = 0;
-    this.fires.resetTrail();
+  }
+
+  private ensureFireBurnables(city: City): void {
+    if (this.fireCity === city && this.fireCityGeneration === city.generationId) {
+      return;
+    }
+
+    this.fireSimulation.clearBurnables();
+    this.fireCity = city;
+    this.fireCityGeneration = city.generationId;
+
+    for (const burnable of city.getBurnables()) {
+      this.fireSimulation.registerBurnable(burnable);
+    }
   }
 
   private placeBeamMesh(
@@ -381,7 +521,7 @@ export class PowerSystem {
     mesh.material.opacity = mesh === this.heatCore ? 0.98 : 0.3 + Math.sin(performance.now() * 0.026) * 0.06;
   }
 
-  private updateFrostParticles(origin: THREE.Vector3, forward: THREE.Vector3, range: number): void {
+  private emitFrostCloud(origin: THREE.Vector3, forward: THREE.Vector3, range: number): void {
     FROST_RIGHT.crossVectors(forward, WORLD_UP);
     if (FROST_RIGHT.lengthSq() < 0.001) {
       FROST_RIGHT.set(1, 0, 0);
@@ -389,23 +529,177 @@ export class PowerSystem {
     FROST_RIGHT.normalize();
     FROST_UP.crossVectors(FROST_RIGHT, forward).normalize();
 
+    let cloud = this.frostClouds[0];
+    for (const candidate of this.frostClouds) {
+      if (candidate.life <= 0) {
+        cloud = candidate;
+        break;
+      }
+      if (candidate.life < cloud.life) {
+        cloud = candidate;
+      }
+    }
+
+    const angle = Math.random() * Math.PI * 2;
+    const spawnRadius = Math.sqrt(Math.random()) * 4.8;
+    const maxLife = 0.92 + Math.random() * 0.38;
+    const speed = (range / maxLife) * (0.68 + Math.random() * 0.18);
+
+    cloud.position
+      .copy(origin)
+      .addScaledVector(forward, 5 + Math.random() * 6)
+      .addScaledVector(FROST_RIGHT, Math.cos(angle) * spawnRadius)
+      .addScaledVector(FROST_UP, Math.sin(angle) * spawnRadius * 0.72);
+    cloud.velocity
+      .copy(forward)
+      .multiplyScalar(speed)
+      .addScaledVector(FROST_RIGHT, (Math.random() - 0.5) * 15)
+      .addScaledVector(FROST_UP, (Math.random() - 0.35) * 9);
+    cloud.startRadius = 3.8 + Math.random() * 2.6;
+    cloud.radius = cloud.startRadius;
+    cloud.maxRadius = 14 + Math.random() * 8;
+    cloud.life = maxLife;
+    cloud.maxLife = maxLife;
+    cloud.seed = Math.random();
+  }
+
+  private updateFrostClouds(delta: number, enemies: EnemyManager, city: City, applyWorldEffects = true): void {
+    const aliveEnemies = applyWorldEffects ? enemies.getAlive() : [];
+    let activeCount = 0;
+
+    for (let index = 0; index < this.frostClouds.length; index += 1) {
+      const cloud = this.frostClouds[index];
+
+      if (cloud.life > 0) {
+        cloud.life = Math.max(0, cloud.life - delta);
+      }
+
+      if (cloud.life > 0) {
+        activeCount += 1;
+        cloud.position.addScaledVector(cloud.velocity, delta);
+        cloud.velocity.multiplyScalar(Math.max(0, 1 - delta * 0.32));
+
+        const lifeRatio = cloud.life / cloud.maxLife;
+        const age = 1 - lifeRatio;
+        const growth = age * age * (3 - 2 * age);
+        const cloudStrength = clamp(age * 3.2, 0, 1) * clamp(lifeRatio * 4, 0, 1);
+        cloud.radius = lerp(cloud.startRadius, cloud.maxRadius, growth);
+
+        for (const enemy of aliveEnemies) {
+          FROST_CENTER.copy(enemy.position);
+          FROST_CENTER.y += 18;
+          TO_ENEMY.copy(FROST_CENTER).sub(cloud.position);
+          const effectRadius = cloud.radius + enemy.radius * 0.85;
+          const distance = TO_ENEMY.length();
+
+          if (distance < effectRadius) {
+            const radiusFalloff = 1 - clamp(distance / effectRadius, 0, 1);
+            const effect = radiusFalloff * radiusFalloff * cloudStrength;
+            enemy.applyCold(delta * FROST_CLOUD_FREEZE_RATE * effect);
+            enemy.takeDamage(delta * FROST_CLOUD_DAMAGE_RATE * effect);
+          }
+        }
+
+        if (applyWorldEffects) {
+          for (const building of city.buildings) {
+            if (building.destroyed) {
+              continue;
+            }
+
+            const halfHeight = building.height * building.mesh.scale.y * 0.5;
+            const centerY = building.baseY + halfHeight;
+            const dx = Math.max(Math.abs(cloud.position.x - building.position.x) - building.halfX, 0);
+            const dy = Math.max(Math.abs(cloud.position.y - centerY) - halfHeight, 0);
+            const dz = Math.max(Math.abs(cloud.position.z - building.position.z) - building.halfZ, 0);
+            const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+            if (distance < cloud.radius) {
+              const radiusFalloff = 1 - clamp(distance / cloud.radius, 0, 1);
+              const effect = radiusFalloff * radiusFalloff * cloudStrength;
+              FROST_CENTER.set(
+                clamp(cloud.position.x, building.position.x - building.halfX, building.position.x + building.halfX),
+                clamp(cloud.position.y, building.baseY, building.baseY + building.height * building.mesh.scale.y),
+                clamp(cloud.position.z, building.position.z - building.halfZ, building.position.z + building.halfZ),
+              );
+              city.applyColdToBuilding(building, delta * FROST_CLOUD_BUILDING_COLD_RATE * effect);
+              if (building.cold.value > 0.7) {
+                city.damageBuilding(
+                  building,
+                  delta * FROST_CLOUD_BUILDING_STRESS_DAMAGE_RATE * building.cold.value * effect,
+                  FROST_CENTER,
+                );
+              }
+            }
+          }
+        }
+
+        FROST_SCALE.setScalar(cloud.radius * (0.68 + lifeRatio * 0.32));
+        FROST_MATRIX.compose(cloud.position, FROST_QUATERNION, FROST_SCALE);
+        this.frostCloudMesh.setMatrixAt(index, FROST_MATRIX);
+
+        const glow = (0.28 + lifeRatio * 0.72) * cloudStrength;
+        this.frostCloudMesh.setColorAt(index, FROST_COLOR.setRGB(0.42 * glow, 0.86 * glow, glow));
+      } else {
+        cloud.radius = 0;
+        FROST_SCALE.setScalar(0.001);
+        FROST_MATRIX.compose(cloud.position, FROST_QUATERNION, FROST_SCALE);
+        this.frostCloudMesh.setMatrixAt(index, FROST_MATRIX);
+        this.frostCloudMesh.setColorAt(index, FROST_COLOR.setRGB(0, 0, 0));
+      }
+    }
+
+    this.frostCloudMesh.visible = activeCount > 0;
+    this.frostCloudMesh.instanceMatrix.needsUpdate = true;
+    if (this.frostCloudMesh.instanceColor) {
+      this.frostCloudMesh.instanceColor.needsUpdate = true;
+    }
+    this.updateFrostParticles(activeCount);
+  }
+
+  private updateFrostParticles(activeCloudCount: number): void {
+    if (activeCloudCount <= 0) {
+      this.frostParticles.visible = false;
+      this.frostPositions.fill(0);
+      this.frostParticles.geometry.attributes.position.needsUpdate = true;
+      return;
+    }
+
+    let fallbackCloud: FrostCloud | null = null;
+    for (const cloud of this.frostClouds) {
+      if (cloud.life > 0) {
+        fallbackCloud = cloud;
+        break;
+      }
+    }
+
     const time = performance.now() * 0.001;
     for (let index = 0; index < FROST_PARTICLE_COUNT; index += 1) {
       const seedIndex = index * 4;
-      const travel = ((this.frostSeeds[seedIndex] + time * (0.52 + this.frostSeeds[seedIndex + 3] * 0.5)) % 1) * range;
-      const spread = 1.2 + travel * 0.25;
-      const angle = this.frostSeeds[seedIndex + 1] * Math.PI * 2 + time * (1.1 + this.frostSeeds[seedIndex + 2]);
-      const radius = Math.sqrt(this.frostSeeds[seedIndex + 2]) * spread;
-      const swirl = Math.sin(time * 4 + index) * 0.7;
-      const x = origin.x + forward.x * travel + FROST_RIGHT.x * Math.cos(angle) * radius + FROST_UP.x * Math.sin(angle) * radius + FROST_RIGHT.x * swirl;
-      const y = origin.y + forward.y * travel + FROST_RIGHT.y * Math.cos(angle) * radius + FROST_UP.y * Math.sin(angle) * radius + FROST_UP.y * swirl;
-      const z = origin.z + forward.z * travel + FROST_RIGHT.z * Math.cos(angle) * radius + FROST_UP.z * Math.sin(angle) * radius + FROST_RIGHT.z * swirl;
+      const cloudIndex = (Math.floor(this.frostSeeds[seedIndex] * FROST_CLOUD_COUNT) + index) % FROST_CLOUD_COUNT;
+      const cloud = this.frostClouds[cloudIndex].life > 0 ? this.frostClouds[cloudIndex] : fallbackCloud;
       const positionIndex = index * 3;
+
+      if (!cloud) {
+        this.frostPositions[positionIndex] = 0;
+        this.frostPositions[positionIndex + 1] = 0;
+        this.frostPositions[positionIndex + 2] = 0;
+        continue;
+      }
+
+      const shellRadius = cloud.radius * (0.2 + this.frostSeeds[seedIndex] * 0.72);
+      const vertical = (this.frostSeeds[seedIndex + 2] * 2 - 1) * shellRadius * 0.82;
+      const flatRadius = Math.sqrt(Math.max(0, shellRadius * shellRadius - vertical * vertical));
+      const angle = this.frostSeeds[seedIndex + 1] * Math.PI * 2 + time * (1.1 + this.frostSeeds[seedIndex + 2]);
+      const swirl = Math.sin(time * 4 + cloud.seed * 11 + index) * (0.4 + this.frostSeeds[seedIndex + 3] * 0.8);
+      const x = cloud.position.x + Math.cos(angle) * flatRadius + swirl;
+      const y = cloud.position.y + vertical + Math.sin(angle * 1.7) * swirl;
+      const z = cloud.position.z + Math.sin(angle) * flatRadius - swirl * 0.6;
       this.frostPositions[positionIndex] = x;
       this.frostPositions[positionIndex + 1] = y;
       this.frostPositions[positionIndex + 2] = z;
     }
 
+    this.frostParticles.visible = true;
     this.frostParticles.geometry.attributes.position.needsUpdate = true;
   }
 
@@ -464,6 +758,29 @@ export class PowerSystem {
     this.sparkLines.visible = active > 0;
     this.sparkLines.material.opacity = active > 0 ? 0.95 : 0;
     this.sparkLines.geometry.attributes.position.needsUpdate = true;
+  }
+
+  private clearFrostClouds(): void {
+    for (let index = 0; index < this.frostClouds.length; index += 1) {
+      const cloud = this.frostClouds[index];
+      cloud.life = 0;
+      cloud.radius = 0;
+      cloud.position.set(0, 0, 0);
+      cloud.velocity.set(0, 0, 0);
+      FROST_SCALE.setScalar(0.001);
+      FROST_MATRIX.compose(cloud.position, FROST_QUATERNION, FROST_SCALE);
+      this.frostCloudMesh.setMatrixAt(index, FROST_MATRIX);
+      this.frostCloudMesh.setColorAt(index, FROST_COLOR.setRGB(0, 0, 0));
+    }
+
+    this.frostCloudMesh.visible = false;
+    this.frostCloudMesh.instanceMatrix.needsUpdate = true;
+    if (this.frostCloudMesh.instanceColor) {
+      this.frostCloudMesh.instanceColor.needsUpdate = true;
+    }
+    this.frostPositions.fill(0);
+    this.frostParticles.geometry.attributes.position.needsUpdate = true;
+    this.frostParticles.visible = false;
   }
 
   private clearSparks(): void {

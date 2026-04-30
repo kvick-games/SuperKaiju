@@ -1,3 +1,11 @@
+import type { PlayerInputState } from "../multiplayer/protocol";
+
+export interface PlayerInputSource {
+  isDown(code: string): boolean;
+  isMouseDown(button: number): boolean;
+  consumeMouseDelta(): { x: number; y: number };
+}
+
 export class InputController {
   private readonly keys = new Set<string>();
   private readonly mouseButtons = new Set<number>();
@@ -80,6 +88,17 @@ export class InputController {
     const queued = this.restartQueued;
     this.restartQueued = false;
     return queued;
+  }
+
+  createNetworkInputState(sequence: number): PlayerInputState {
+    const mouseDelta = this.consumeMouseDelta();
+    return {
+      sequence,
+      keys: [...this.keys],
+      mouseButtons: [...this.mouseButtons],
+      mouseDeltaX: mouseDelta.x,
+      mouseDeltaY: mouseDelta.y,
+    };
   }
 
   clearCombatInputs(): void {

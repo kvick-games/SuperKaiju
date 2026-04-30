@@ -8,5 +8,5 @@
     "outDir": "dist/lib",
     "sourceMap": true
   },
-  "include": ["src/core", "src/three", "src/editor", "src/index.ts"]
+  "include": ["src/core", "src/three", "src/editor", "src/multiplayer", "src/index.ts"]
 }

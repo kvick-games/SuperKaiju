@@ -4,8 +4,14 @@ import {
   createDemoHumanoidRigDefinition,
   getConstraintExecutionOrder,
 } from "../dist/lib/core/index.js";
-import { createDemoCharacter } from "../dist/lib/three/index.js";
+import { createDemoCharacter, createRagdollSkeleton } from "../dist/lib/three/index.js";
 import { createRigEditor } from "../dist/lib/editor/index.js";
+import {
+  MAX_LOBBY_PLAYERS,
+  MULTIPLAYER_PROTOCOL_VERSION,
+  isProtocolMessage,
+  sanitizePlayerName,
+} from "../dist/lib/multiplayer/protocol.js";
 
 const tests = [];
 
@@ -165,6 +171,65 @@ test("binds and evaluates a generated Three.js demo skeleton", () => {
   const hand = demo.binder.getBoneWorldTransform("Hand.L");
   assert.ok(Number.isFinite(hand.position[0]));
   assert.ok(hand.position[0] < -0.6);
+});
+
+test("simulates ragdoll particles back onto a Three.js skeleton", () => {
+  const demo = createDemoCharacter();
+  const ragdoll = createRagdollSkeleton(demo.binder, {
+    boneNames: ["Hips", "Spine", "Chest", "UpperArm.L", "LowerArm.L", "Hand.L"],
+    floorY: -10,
+    gravity: [0, -20, 0],
+    solverIterations: 4,
+  });
+  const before = demo.binder.getBoneWorldTransform("Hand.L").position;
+  ragdoll.setEnabled(true);
+  ragdoll.applyImpulse({ boneNames: ["Hand.L"], vector: [-2, 1, 0], strength: 1 });
+  for (let index = 0; index < 8; index += 1) {
+    ragdoll.update(1 / 60);
+  }
+  const after = demo.binder.getBoneWorldTransform("Hand.L").position;
+  assert.ok(after[0] < before[0] - 0.1, `expected hand to move left from ${before[0]} to ${after[0]}`);
+  assert.ok(Number.isFinite(after[1]));
+});
+
+test("keeps ragdoll writeback from changing bone scales", () => {
+  const demo = createDemoCharacter();
+  const ragdoll = createRagdollSkeleton(demo.binder, {
+    floorY: 0,
+    gravity: [0, -90, 0],
+    solverIterations: 8,
+    stiffness: 0.94,
+  });
+  ragdoll.setEnabled(true);
+  ragdoll.applyImpulse({
+    boneNames: ["Head", "Hand.L", "Hand.R", "Foot.L", "Foot.R"],
+    position: [0, 0, 0],
+    radius: 4,
+    strength: 4,
+  });
+
+  for (let index = 0; index < 900; index += 1) {
+    ragdoll.update(1 / 60);
+  }
+
+  for (const boneName of ["Hips", "Spine", "Chest", "Hand.L", "Foot.L"]) {
+    const { scale } = demo.binder.getBoneLocalTransform(boneName);
+    assert.ok(scale.every(Number.isFinite), `${boneName} scale must stay finite`);
+    near(scale, [1, 1, 1], 1e-8);
+  }
+});
+
+test("sanitizes lobby player names for protocol messages", () => {
+  assert.equal(sanitizePlayerName("  Sky    Warden  "), "Sky Warden");
+  assert.equal(sanitizePlayerName(""), "Pilot");
+  assert.equal(sanitizePlayerName("abcdefghijklmnopqrstuv"), "abcdefghijklmnopqr");
+});
+
+test("keeps multiplayer protocol constants stable", () => {
+  assert.equal(MULTIPLAYER_PROTOCOL_VERSION, 1);
+  assert.equal(MAX_LOBBY_PLAYERS, 4);
+  assert.equal(isProtocolMessage({ type: "client:join" }), true);
+  assert.equal(isProtocolMessage({}), false);
 });
 
 test("mounts the editor with host-provided viewport callbacks", () => {

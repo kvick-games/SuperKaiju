@@ -78,8 +78,16 @@ export class ThreeSkeletonBinder implements RigSkeletonAdapter {
   }
 
   setBoneWorldPosition(name: string, position: Vec3Tuple): void {
-    const current = this.getBoneWorldTransform(name);
-    this.setBoneWorldTransform(name, { ...current, position });
+    const bone = this.getBone(name);
+    const worldPosition = vectorFromTuple(position);
+
+    if (bone.parent) {
+      bone.parent.updateWorldMatrix(true, false);
+      bone.position.copy(bone.parent.worldToLocal(worldPosition));
+      return;
+    }
+
+    bone.position.copy(worldPosition);
   }
 
   resetPose(): void {
