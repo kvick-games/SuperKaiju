@@ -67,6 +67,7 @@ export class Game {
   private readonly speedLines: SpeedLines;
   private readonly weather: WeatherSystem;
   private readonly clock = new THREE.Clock();
+  private readonly coopEnabled = isCoopEnabled();
   private readonly players = new Map<PlayerId, Player>();
   private readonly playerNames = new Map<PlayerId, string>();
   private readonly playerPowers = new Map<PlayerId, PowerSystem>();
@@ -77,7 +78,7 @@ export class Game {
   private networkSession: LobbyClient | null = null;
   private localPlayerId: PlayerId = "local";
   private lobbyPlayers: LobbyPlayer[] = [];
-  private lobbyStatus = "Solo sortie ready";
+  private lobbyStatus = this.coopEnabled ? "Solo sortie ready" : "Solo sortie ready - co-op pending";
   private inviteUrl: string | null = null;
   private phase: GamePhase = "start";
   private animationFrame = 0;
@@ -122,8 +123,10 @@ export class Game {
     this.animationFrame = requestAnimationFrame(this.tick);
 
     const linkedLobby = getLobbyIdFromLocation();
-    if (linkedLobby) {
+    if (linkedLobby && this.coopEnabled) {
       void this.joinLobby(linkedLobby);
+    } else if (linkedLobby) {
+      this.lobbyStatus = "Co-op lobby service is not configured.";
     }
   }
 
@@ -375,6 +378,11 @@ export class Game {
   };
 
   private readonly handleHostLobby = (): void => {
+    if (!this.coopEnabled) {
+      this.lobbyStatus = "Co-op lobby service is not configured.";
+      return;
+    }
+
     if (this.networkMode !== "offline" || this.phase !== "start") {
       return;
     }
@@ -383,6 +391,11 @@ export class Game {
   };
 
   private readonly handleJoinLobby = (): void => {
+    if (!this.coopEnabled) {
+      this.lobbyStatus = "Co-op lobby service is not configured.";
+      return;
+    }
+
     if (this.networkMode !== "offline" || this.phase !== "start") {
       return;
     }
@@ -685,8 +698,8 @@ export class Game {
         inviteUrl: this.inviteUrl,
         players: this.getCurrentRoster().filter((player) => player.id !== "local" || this.networkMode === "offline"),
         joined: this.networkMode !== "offline",
-        canHost: this.networkMode === "offline" && this.phase === "start",
-        canJoin: this.networkMode === "offline" && this.phase === "start",
+        canHost: this.coopEnabled && this.networkMode === "offline" && this.phase === "start",
+        canJoin: this.coopEnabled && this.networkMode === "offline" && this.phase === "start",
         canCopyInvite: this.networkMode === "host" && Boolean(this.inviteUrl),
         canStart: this.phase !== "playing" && this.phase !== "level-complete" && this.networkMode !== "client",
       },
@@ -840,7 +853,7 @@ export class Game {
       return `Connected - ${connectedCount} ${noun} in lobby`;
     }
 
-    return "Solo sortie ready";
+    return this.coopEnabled ? "Solo sortie ready" : "Solo sortie ready - co-op pending";
   }
 
   private getActivePlayers(): Player[] {
@@ -918,6 +931,10 @@ function createWorldSeed(): number {
   const time = Date.now() >>> 0;
   const entropy = Math.floor(Math.random() * 0xffffffff) >>> 0;
   return (time ^ entropy) >>> 0;
+}
+
+function isCoopEnabled(): boolean {
+  return new URLSearchParams(window.location.search).get("coop") !== "disabled";
 }
 
 function parseLobbyId(value: string): string | null {
