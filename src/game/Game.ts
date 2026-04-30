@@ -50,6 +50,7 @@ const DAMAGE_SOUND_MIN_GAIN = 0.08;
 const DAMAGE_SOUND_FULL_GAIN_DISTANCE = 34;
 const DAMAGE_SOUND_MAX_DISTANCE = 220;
 const LEVEL_COMPLETE_DELAY = 3;
+const DREAMATRON_GAME_ID = "sky-warden-kaiju-break";
 
 export interface GameOptions {
   cityLayout?: CityLayoutPlan | null;
@@ -81,7 +82,9 @@ export class Game {
   private phase: GamePhase = "start";
   private animationFrame = 0;
   private elapsed = 0;
+  private runElapsed = 0;
   private levelCompleteElapsed = 0;
+  private reportedScoreForRun = false;
   private worldSeed = createWorldSeed();
   private inputSequence = 0;
   private snapshotSequence = 0;
@@ -138,6 +141,9 @@ export class Game {
     this.animationFrame = requestAnimationFrame(this.tick);
     const delta = Math.min(this.clock.getDelta(), 0.05);
     this.elapsed += delta;
+    if (this.phase === "playing" || this.phase === "level-complete") {
+      this.runElapsed += delta;
+    }
 
     if (this.input.consumePrimaryAction() && (this.phase === "start" || this.phase === "win" || this.phase === "lose")) {
       this.handlePrimaryAction();
@@ -171,6 +177,7 @@ export class Game {
     }
 
     this.publishHostSnapshot(delta);
+    this.reportDreamatronScoreIfReady();
     this.hud.update(this.createHudSnapshot());
     this.sceneController.render();
   };
@@ -484,10 +491,43 @@ export class Game {
     this.sound.resume();
     this.resetWorld(seed);
     this.phase = "playing";
+    this.runElapsed = 0;
+    this.reportedScoreForRun = false;
     this.lobbyStatus = this.networkMode === "offline" ? "Solo sortie active" : "Co-op sortie active";
     if (requestPointerLock) {
       this.input.requestPointerLock();
     }
+  }
+
+  private reportDreamatronScoreIfReady(): void {
+    if (this.phase !== "win" || this.reportedScoreForRun || window.parent === window) {
+      return;
+    }
+
+    this.reportedScoreForRun = true;
+    const cityDamage = this.city.getDamageRatio();
+    const score = Math.max(0, Math.round((1 - cityDamage) * 100000 + Math.max(0, 600 - this.runElapsed) * 100));
+
+    window.parent.postMessage(
+      {
+        type: "dreamatron:score",
+        source: DREAMATRON_GAME_ID,
+        gameId: DREAMATRON_GAME_ID,
+        version: 1,
+        payload: {
+          score,
+          mode: "default",
+          metadata: {
+            result: "win",
+            cityDamage,
+            elapsed: this.runElapsed,
+            monstersRemaining: this.enemies.remaining(),
+            networkMode: this.networkMode,
+          },
+        },
+      },
+      "*",
+    );
   }
 
   private resetWorld(seed: number): void {

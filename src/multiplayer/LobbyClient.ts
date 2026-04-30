@@ -51,9 +51,9 @@ export class LobbyClient {
 
   static async host(playerName: string, handlers: LobbyClientHandlers): Promise<LobbyClient> {
     handlers.onStatus?.("Creating lobby");
-    const response = await fetch("/api/lobbies", { method: "POST" });
+    const response = await fetch(createApiUrl("/api/lobbies"), { method: "POST" });
     if (!response.ok) {
-      throw new Error(await getErrorMessage(response, "Could not create a Cloudflare lobby."));
+      throw new Error(await getErrorMessage(response, "Could not create a co-op lobby."));
     }
 
     const created = (await response.json()) as LobbyCreatedResponse;
@@ -61,7 +61,7 @@ export class LobbyClient {
       const client = new LobbyClient(
         {
           lobbyId: created.lobbyId,
-          inviteUrl: created.inviteUrl,
+          inviteUrl: createInviteUrl(created.lobbyId) ?? created.inviteUrl,
           role: "host",
           hostToken: created.hostToken,
           playerName,
@@ -149,7 +149,7 @@ export class LobbyClient {
     });
 
     socket.addEventListener("error", () => {
-      this.handlers.onError?.("Lobby connection failed. Use the Cloudflare dev/deploy server, not the plain Vite server.");
+      this.handlers.onError?.("Lobby connection failed. Check the configured Cloudflare lobby service.");
     });
   }
 
@@ -233,9 +233,59 @@ export function getLobbyIdFromLocation(location: Location = window.location): Lo
 }
 
 function createWebSocketUrl(lobbyId: LobbyId): string {
-  const url = new URL(`/ws/lobbies/${encodeURIComponent(lobbyId)}`, window.location.href);
+  const lobbyOrigin = getLobbyOrigin();
+  const url = new URL(`/ws/lobbies/${encodeURIComponent(lobbyId)}`, lobbyOrigin ?? window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   return url.toString();
+}
+
+function createApiUrl(pathname: string): string {
+  const lobbyOrigin = getLobbyOrigin();
+  return lobbyOrigin ? new URL(pathname, lobbyOrigin).toString() : pathname;
+}
+
+function createInviteUrl(lobbyId: LobbyId): string | null {
+  const inviteBaseUrl = getInviteBaseUrl();
+  if (!inviteBaseUrl) {
+    return null;
+  }
+
+  const url = new URL(inviteBaseUrl, window.location.href);
+  url.search = `?lobby=${encodeURIComponent(lobbyId)}`;
+  url.hash = "";
+  return url.toString();
+}
+
+function getLobbyOrigin(): string | null {
+  const config = getDreamatronConfig();
+  const params = new URLSearchParams(window.location.search);
+  return normalizeHttpOrigin(params.get("lobbyOrigin") ?? config?.lobbyOrigin);
+}
+
+function getInviteBaseUrl(): string | null {
+  const config = getDreamatronConfig();
+  const params = new URLSearchParams(window.location.search);
+  const value = params.get("inviteBaseUrl") ?? config?.inviteBaseUrl;
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
+function getDreamatronConfig(): { lobbyOrigin?: string; inviteBaseUrl?: string } | undefined {
+  return (window as Window & {
+    __DREAMATRON_GAME_CONFIG__?: { lobbyOrigin?: string; inviteBaseUrl?: string };
+  }).__DREAMATRON_GAME_CONFIG__;
+}
+
+function normalizeHttpOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 async function getErrorMessage(response: Response, fallback: string): Promise<string> {

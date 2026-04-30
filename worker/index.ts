@@ -18,6 +18,7 @@ interface Env {
   ASSETS: Fetcher;
   LOBBIES: DurableObjectNamespace;
   PUBLIC_INVITE_ORIGIN?: string;
+  ALLOWED_ORIGINS?: string;
 }
 
 interface LobbyCreateRequest {
@@ -34,6 +35,14 @@ interface SocketAttachment {
 const JSON_HEADERS = {
   "Content-Type": "application/json; charset=utf-8",
 };
+const DEFAULT_ALLOWED_ORIGINS = new Set([
+  "https://dreamatron.ai",
+  "https://www.dreamatron.ai",
+  "http://localhost:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3000",
+  "http://127.0.0.1:3001",
+]);
 const PUBLIC_ORIGIN_OBJECT_NAME = "__public_invite_origin__";
 const PUBLIC_ORIGIN_ENDPOINT = "https://internal.invalid/_internal/public-origin";
 
@@ -45,7 +54,7 @@ export default {
     await rememberPublicOrigin(request, env);
 
     if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
-      return new Response(null, { status: 204 });
+      return new Response(null, { status: 204, headers: getCorsPreflightHeaders(request, env) });
     }
 
     if (request.method === "POST" && url.pathname === "/api/lobbies") {
@@ -68,6 +77,7 @@ export default {
 };
 
 async function createLobby(request: Request, env: Env): Promise<Response> {
+  const corsHeaders = getCorsHeaders(request, env);
   const lobbyId = createShortId();
   const hostToken = createToken();
   const durableId = env.LOBBIES.idFromName(lobbyId);
@@ -81,7 +91,13 @@ async function createLobby(request: Request, env: Env): Promise<Response> {
   );
 
   if (!createResponse.ok) {
-    return createResponse;
+    return new Response(createResponse.body, {
+      status: createResponse.status,
+      headers: {
+        ...JSON_HEADERS,
+        ...corsHeaders,
+      },
+    });
   }
 
   const inviteOrigin = await getInviteOrigin(request, env);
@@ -94,7 +110,7 @@ async function createLobby(request: Request, env: Env): Promise<Response> {
     lobbyId,
     hostToken,
     inviteUrl: inviteUrl.toString(),
-  } satisfies LobbyCreatedResponse);
+  } satisfies LobbyCreatedResponse, 200, corsHeaders);
 }
 
 export class LobbyRoom {
@@ -522,11 +538,67 @@ function encode(message: RelayToClientMessage): string {
   return JSON.stringify(message);
 }
 
-function json(value: unknown, status = 200): Response {
+function json(value: unknown, status = 200, headers: HeadersInit = {}): Response {
   return new Response(JSON.stringify(value), {
     status,
-    headers: JSON_HEADERS,
+    headers: {
+      ...JSON_HEADERS,
+      ...headers,
+    },
   });
+}
+
+function getCorsPreflightHeaders(request: Request, env: Env): HeadersInit {
+  const headers = getCorsHeaders(request, env);
+  return {
+    ...headers,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "86400",
+  };
+}
+
+function getCorsHeaders(request: Request, env: Env): HeadersInit {
+  const origin = normalizeCorsOrigin(request.headers.get("Origin"));
+  if (!origin || !isAllowedCorsOrigin(origin, env)) {
+    return {};
+  }
+
+  return {
+    "Access-Control-Allow-Origin": origin,
+    Vary: "Origin",
+  };
+}
+
+function isAllowedCorsOrigin(origin: string, env: Env): boolean {
+  if (DEFAULT_ALLOWED_ORIGINS.has(origin)) {
+    return true;
+  }
+
+  const hostname = new URL(origin).hostname.toLowerCase();
+  if (hostname.endsWith(".vercel.app")) {
+    return true;
+  }
+
+  const configuredOrigins = (env.ALLOWED_ORIGINS ?? "")
+    .split(",")
+    .map((value) => normalizeCorsOrigin(value))
+    .filter((value): value is string => Boolean(value));
+
+  return configuredOrigins.includes(origin);
+}
+
+function normalizeCorsOrigin(origin: unknown): string | null {
+  if (typeof origin !== "string" || origin.trim().length === 0) {
+    return null;
+  }
+
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.origin : null;
+  } catch {
+    return null;
+  }
 }
 
 function createShortId(): string {
