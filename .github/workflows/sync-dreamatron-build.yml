@@ -1,0 +1,165 @@
+name: Sync Dreamatron game build
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: dreamatron-sync-sky-warden-kaiju-break
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  GAME_SLUG: sky-warden-kaiju-break
+  GAME_TITLE: "Sky Warden: Kaiju Break"
+  DREAMATRON_REPO: Dreamatron/dreamatron_site
+  DREAMATRON_BRANCH: main
+  DREAMATRON_SYNC_BRANCH: game-sync/sky-warden-kaiju-break
+  GAME_BUILD_DIR: dist/demo
+  DREAMATRON_GAME_DIR: frontend/public/game-builds/sky-warden-kaiju-break
+
+jobs:
+  sync:
+    name: Build game and open Dreamatron PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify Dreamatron token is configured
+        env:
+          DREAMATRON_TOKEN: ${{ secrets.DREAMATRON_SITE_PUSH_TOKEN }}
+        run: |
+          if [ -z "$DREAMATRON_TOKEN" ]; then
+            echo "::error::Missing DREAMATRON_SITE_PUSH_TOKEN. Add a fine-grained token with contents:write and pull_requests:write access to $DREAMATRON_REPO."
+            exit 1
+          fi
+
+      - name: Check out game source
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build game
+        run: npm run build
+
+      - name: Test game
+        run: npm test
+
+      - name: Verify static asset paths
+        run: |
+          if grep -E 'src="/assets/|href="/assets/' "$GAME_BUILD_DIR/index.html"; then
+            echo "::error::Built index.html contains root-relative asset paths. Vite base must stay './'."
+            exit 1
+          fi
+
+          if ! grep -E 'src="./assets/|href="./assets/' "$GAME_BUILD_DIR/index.html"; then
+            echo "::error::Built index.html does not reference relative assets."
+            exit 1
+          fi
+
+      - name: Write Dreamatron build manifest
+        run: |
+          cat > "$GAME_BUILD_DIR/dreamatron-build.json" <<EOF
+          {
+            "gameId": "$GAME_SLUG",
+            "title": "$GAME_TITLE",
+            "sourceRepository": "$GITHUB_REPOSITORY",
+            "sourceBranch": "$GITHUB_REF_NAME",
+            "sourceSha": "$GITHUB_SHA",
+            "sourceCommitUrl": "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA"
+          }
+          EOF
+
+      - name: Check out Dreamatron site
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.DREAMATRON_REPO }}
+          ref: ${{ env.DREAMATRON_BRANCH }}
+          token: ${{ secrets.DREAMATRON_SITE_PUSH_TOKEN }}
+          path: dreamatron-site
+
+      - name: Copy game build into Dreamatron
+        run: |
+          cd dreamatron-site
+          git checkout -B "$DREAMATRON_SYNC_BRANCH"
+          rm -rf "$DREAMATRON_GAME_DIR"
+          mkdir -p "$DREAMATRON_GAME_DIR"
+          cp -R "../$GAME_BUILD_DIR/." "$DREAMATRON_GAME_DIR/"
+
+      - name: Commit Dreamatron update
+        id: commit-update
+        working-directory: dreamatron-site
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$DREAMATRON_GAME_DIR"
+
+          if git diff --cached --quiet; then
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            echo "Dreamatron already has this build."
+            exit 0
+          fi
+
+          git commit -m "Update Sky Warden build"
+
+          if git ls-remote --exit-code --heads origin "$DREAMATRON_SYNC_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$DREAMATRON_SYNC_BRANCH"
+            git push --force-with-lease origin "$DREAMATRON_SYNC_BRANCH"
+          else
+            git push origin "$DREAMATRON_SYNC_BRANCH"
+          fi
+
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update Dreamatron PR
+        if: steps.commit-update.outputs.has_changes == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.DREAMATRON_SITE_PUSH_TOKEN }}
+        run: |
+          cat > /tmp/dreamatron-pr-body.md <<EOF
+          Automated update for **$GAME_TITLE**.
+
+          Source repo: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY
+          Source commit: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$GITHUB_SHA
+
+          Checks completed:
+          - npm ci
+          - npm run build
+          - npm test
+          - relative asset path verification
+
+          This PR replaces \`$DREAMATRON_GAME_DIR\` with the latest Vite static build from \`$GITHUB_REF_NAME\`.
+          EOF
+
+          existing_pr="$(gh pr list \
+            --repo "$DREAMATRON_REPO" \
+            --head "$DREAMATRON_SYNC_BRANCH" \
+            --base "$DREAMATRON_BRANCH" \
+            --state open \
+            --json number \
+            --jq '.[0].number // ""')"
+
+          if [ -n "$existing_pr" ]; then
+            gh pr edit "$existing_pr" \
+              --repo "$DREAMATRON_REPO" \
+              --title "Update Sky Warden build from SupermanKaiju main" \
+              --body-file /tmp/dreamatron-pr-body.md
+            gh pr view "$existing_pr" --repo "$DREAMATRON_REPO" --json url --jq '.url'
+          else
+            gh pr create \
+              --repo "$DREAMATRON_REPO" \
+              --base "$DREAMATRON_BRANCH" \
+              --head "$DREAMATRON_SYNC_BRANCH" \
+              --title "Update Sky Warden build from SupermanKaiju main" \
+              --body-file /tmp/dreamatron-pr-body.md
+          fi
