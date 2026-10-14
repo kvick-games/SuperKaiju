@@ -30,7 +30,7 @@ Inputs come from `src/game/Input.ts`, `Player.ts`, and `Powers.ts`. The on-scree
 | Right click | Frost breath while held. The canvas context menu is suppressed. |
 | Space | Climb. |
 | Ctrl | Descend. Either Control key. |
-| Shift | Boost. Either Shift key. Needs enough energy to start. Thrust spends energy; emptying it locks boost until Shift is released. With no steer input, boost glides and recharges a little. A fast boost can ram kaiju and buildings. |
+| Shift | Boost. Either Shift key. Needs enough energy to start. W/A/S/D thrust spends energy; emptying it locks boost until Shift is released. With no W/A/S/D input, boost glides under gravity and recharges a little. Space and Ctrl do not climb or descend while boost is active. A fast boost can ram kaiju and buildings. |
 | Enter | Same as the primary button: start, fly again, or retry. Ignored while playing, during the level-complete beat, and for co-op clients. |
 | R | Restart the sortie on a new seed. Ignored for co-op clients. |
 
